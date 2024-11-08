@@ -23,7 +23,7 @@ if not os.path.exists('img'):
     os.makedirs('img')
 
 # Список доступных языков
-languages = ['en', 'ru', 'de', 'fr', 'it', 'es', 'zh-cn']
+languages = ['en', 'ru', 'de', 'fr', 'it', 'es', 'fi']
 
 # Хранилище текстов
 text_storage = {}
@@ -91,6 +91,12 @@ async def text_to_voice(callback: CallbackQuery):
     voice = FSInputFile(file_path)
     await bot.send_voice(chat_id=callback.message.chat.id, voice=voice)
 
+    #+++++++++++++++++++++++++++++++++++++++++++++++
+    # Отправляем уведомление с указанием случайного языка
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено на случайном языке: {random_lang.upper()}")
+
+
+
     # Удаляем файл после отправки (опционально)
     os.remove(file_path)
 
@@ -100,7 +106,7 @@ async def text_to_voice(callback: CallbackQuery):
     # Пауза перед отправкой меню (имитация ожидания прослушивания)
     await asyncio.sleep(5)
 
-    # Создаем меню с кнопками для выбора языка
+    # Создаем меню с кнопками выбора языка
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=lang.upper(), callback_data=f"select_lang:{lang}:{message_id}") for lang in languages]
@@ -131,6 +137,10 @@ async def generate_voice_with_selected_lang(callback: CallbackQuery):
     voice = FSInputFile(file_path)
     await bot.send_voice(chat_id=callback.message.chat.id, voice=voice)
 
+
+    # Отправляем уведомление с указанием языка
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено на языке: {selected_lang.upper()}")
+
     # Удаляем файл (опционально)
     os.remove(file_path)
 
@@ -138,21 +148,44 @@ async def generate_voice_with_selected_lang(callback: CallbackQuery):
     await callback.answer()
 
 
-# Функция для перевода текста
+# Обработка кнопки "Перевести текст" — выбор языка перевода
 @router.callback_query(lambda callback: callback.data.startswith("translate:"))
-async def translate_text(callback: CallbackQuery):
+async def choose_translation_language(callback: CallbackQuery):
     # Извлекаем идентификатор сообщения
     message_id = int(callback.data.split("translate:")[1])
     user_text = text_storage.get(message_id, "Текст не найден.")
 
-    # Перевод текста на английский
-    translated = GoogleTranslator(source='auto', target='en').translate(user_text)
+    # Сохраняем текст в хранилище (опционально, для дальнейшего использования)
+    text_storage[callback.id] = user_text
 
-    # Отправляем перевод пользователю
-    await callback.message.reply(f"Перевод текста:\n{translated}")
+    # Создаем меню с кнопками выбора языка
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=lang.upper(), callback_data=f"translate_to:{lang}:{callback.id}") for lang in languages]
+        ]
+    )
 
-    # Убираем "часики" на кнопке
-    await callback.answer()
+    # Отправляем меню с языками
+    await bot.send_message(chat_id=callback.message.chat.id, text="Выберите язык перевода:", reply_markup=keyboard)
+    await callback.answer()  # Убираем "часики" на кнопке
+
+
+# Выполнение перевода на выбранный язык
+@router.callback_query(lambda callback: callback.data.startswith("translate_to:"))
+async def translate_text(callback: CallbackQuery):
+    # Извлекаем выбранный язык и идентификатор текста
+    _, target_lang, text_id = callback.data.split(":", 2)
+    user_text = text_storage.get(text_id, "Текст не найден.")
+
+    # Выполняем перевод
+    try:
+        translated_text = GoogleTranslator(source='auto', target=target_lang).translate(user_text)
+    except Exception as e:
+        translated_text = f"Ошибка перевода: {e}"
+
+    # Отправляем переведённый текст
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Перевод на {target_lang.upper()}:\n{translated_text}")
+    await callback.answer()  # Убираем "часики" на кнопке
 
 
 # Основная функция для запуска бота
