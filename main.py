@@ -25,6 +25,8 @@ if not os.path.exists('img'):
 # Список доступных языков
 languages = ['en', 'ru', 'de', 'fr', 'it', 'es', 'fi']
 
+
+
 # Хранилище текстов
 text_storage = {}
 
@@ -93,7 +95,7 @@ async def text_to_voice(callback: CallbackQuery):
 
     #+++++++++++++++++++++++++++++++++++++++++++++++
     # Отправляем уведомление с указанием случайного языка
-    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено на случайном языке: {random_lang.upper()}")
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено c акцентом  {random_lang.upper()}  языка:))")
 
 
 
@@ -139,7 +141,7 @@ async def generate_voice_with_selected_lang(callback: CallbackQuery):
 
 
     # Отправляем уведомление с указанием языка
-    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено на языке: {selected_lang.upper()}")
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено с акцентом {selected_lang.upper()} языка:")
 
     # Удаляем файл (опционально)
     os.remove(file_path)
