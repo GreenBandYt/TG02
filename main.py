@@ -6,6 +6,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, CallbackQuery
 from gtts import gTTS
+from deep_translator import GoogleTranslator
 
 # Укажите ваш токен
 BOT_TOKEN = TOKEN
@@ -18,11 +19,14 @@ router = Router()
 # Создаем папки для сохранения файлов
 if not os.path.exists('audio'):
     os.makedirs('audio')
-if not os.path.exists('photos'):
-    os.makedirs('photos')
+if not os.path.exists('img'):
+    os.makedirs('img')
 
 # Список доступных языков
 languages = ['en', 'ru', 'de', 'fr', 'it', 'es', 'zh-cn']
+
+# Хранилище текстов
+text_storage = {}
 
 
 # Функция для сохранения фото
@@ -37,7 +41,7 @@ async def save_photo(message: Message):
     await bot.download(file, destination=file_name)
 
     # Уведомляем пользователя
-    await message.reply(f"Ваше фото сохранено как {file_name}")
+    await message.reply(f"Ваше фото сохранено в папке img как {file_name}")
 
 
 # Обработка текстового сообщения
@@ -45,25 +49,34 @@ async def save_photo(message: Message):
 async def handle_text(message: Message):
     user_text = message.text
 
-    # Создаём клавиатуру с кнопкой "Сделать голосовое"
+    # Сохраняем текст в хранилище с идентификатором сообщения
+    text_storage[message.message_id] = user_text
+
+    # Создаём клавиатуру с кнопками
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Сделать голосовое", callback_data=f"voice:{user_text}"
+                    text="Сделать голосовое", callback_data=f"voice:{message.message_id}"
+                ),
+                InlineKeyboardButton(
+                    text="Перевести текст", callback_data=f"translate:{message.message_id}"
                 )
             ]
         ]
     )
 
-    # Отправляем сообщение с кнопкой
-    await message.reply("Нажмите на кнопку, чтобы сгенерировать голосовое сообщение:", reply_markup=keyboard)
+    # Отправляем сообщение с кнопками
+    await message.reply("Выберите действие:", reply_markup=keyboard)
 
 
 # Генерация голосового сообщения с меню выбора языка
 @router.callback_query(lambda callback: callback.data.startswith("voice:"))
 async def text_to_voice(callback: CallbackQuery):
-    user_text = callback.data.split("voice:")[1]
+    # Извлекаем идентификатор сообщения
+    message_id = int(callback.data.split("voice:")[1])
+    user_text = text_storage.get(message_id, "Текст не найден.")
+
     file_path = f"audio/{callback.id}_random.mp3"
 
     # Случайный выбор языка
@@ -90,7 +103,7 @@ async def text_to_voice(callback: CallbackQuery):
     # Создаем меню с кнопками для выбора языка
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=lang.upper(), callback_data=f"select_lang:{lang}:{user_text}") for lang in languages]
+            [InlineKeyboardButton(text=lang.upper(), callback_data=f"select_lang:{lang}:{message_id}") for lang in languages]
         ]
     )
 
@@ -101,8 +114,11 @@ async def text_to_voice(callback: CallbackQuery):
 # Генерация голосового сообщения с выбранным языком
 @router.callback_query(lambda callback: callback.data.startswith("select_lang:"))
 async def generate_voice_with_selected_lang(callback: CallbackQuery):
-    # Извлекаем выбранный язык и текст
-    _, selected_lang, user_text = callback.data.split(":", 2)
+    # Извлекаем выбранный язык и идентификатор текста
+    _, selected_lang, message_id = callback.data.split(":", 2)
+    message_id = int(message_id)
+    user_text = text_storage.get(message_id, "Текст не найден.")
+
     file_path = f"audio/{callback.id}_{selected_lang}.mp3"
 
     print(f"Выбранный язык: {selected_lang}")
@@ -117,6 +133,23 @@ async def generate_voice_with_selected_lang(callback: CallbackQuery):
 
     # Удаляем файл (опционально)
     os.remove(file_path)
+
+    # Убираем "часики" на кнопке
+    await callback.answer()
+
+
+# Функция для перевода текста
+@router.callback_query(lambda callback: callback.data.startswith("translate:"))
+async def translate_text(callback: CallbackQuery):
+    # Извлекаем идентификатор сообщения
+    message_id = int(callback.data.split("translate:")[1])
+    user_text = text_storage.get(message_id, "Текст не найден.")
+
+    # Перевод текста на английский
+    translated = GoogleTranslator(source='auto', target='en').translate(user_text)
+
+    # Отправляем перевод пользователю
+    await callback.message.reply(f"Перевод текста:\n{translated}")
 
     # Убираем "часики" на кнопке
     await callback.answer()
