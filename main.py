@@ -1,12 +1,17 @@
+import logging
 from config import TOKEN
-
 import os
 import random
 import asyncio
 from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, CallbackQuery
-from gtts import gTTS
+from gtts import gTTS, gTTSError
 from deep_translator import GoogleTranslator
+from time import sleep
+
+# Настроим логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Укажите ваш токен
 BOT_TOKEN = TOKEN
@@ -25,8 +30,6 @@ if not os.path.exists('img'):
 # Список доступных языков
 languages = ['en', 'ru', 'de', 'fr', 'it', 'es', 'fi']
 
-
-
 # Хранилище текстов
 text_storage = {}
 
@@ -40,9 +43,9 @@ async def save_photo(message: Message):
 
     # Скачиваем фото
     file = await bot.get_file(photo.file_id)
-    await bot.download(file, destination=file_name)
+    await file.download(destination=file_name)
 
-    # Уведомляем пользователя
+    logger.info(f"Фото сохранено как {file_name}")
     await message.reply(f"Ваше фото сохранено в папке img как {file_name}")
 
 
@@ -51,23 +54,24 @@ async def save_photo(message: Message):
 async def handle_text(message: Message):
     user_text = message.text
 
+    logger.info(f"Получено текстовое сообщение: {user_text}")
+
     # Сохраняем текст в хранилище с идентификатором сообщения
     text_storage[message.message_id] = user_text
 
-    # Создаём клавиатуру с кнопками
+    # Создаем клавиатуру с кнопками
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Сделать голосовое", callback_data=f"voice:{message.message_id}"
-                ),
-                InlineKeyboardButton(
-                    text="Перевести текст", callback_data=f"translate:{message.message_id}"
-                )
-            ]
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="Сделать голосовое", callback_data=f"voice:{message.message_id}"
+            ),
+            InlineKeyboardButton(
+                text="Перевести текст", callback_data=f"translate:{message.message_id}"
+            )
+        ]]
     )
 
+    logger.info("Отправлены кнопки для выбора действия")
     # Отправляем сообщение с кнопками
     await message.reply("Выберите действие:", reply_markup=keyboard)
 
@@ -79,44 +83,46 @@ async def text_to_voice(callback: CallbackQuery):
     message_id = int(callback.data.split("voice:")[1])
     user_text = text_storage.get(message_id, "Текст не найден.")
 
+    logger.info(f"Генерация голосового сообщения для текста: {user_text}")
+
     file_path = f"audio/{callback.id}_random.mp3"
 
     # Случайный выбор языка
     random_lang = random.choice(languages)
-    print(f"Случайно выбранный язык: {random_lang}")
+    logger.info(f"Случайно выбранный язык: {random_lang}")
 
-    # Генерация голосового сообщения
-    tts = gTTS(user_text, lang=random_lang)
-    tts.save(file_path)
+    # Генерация голосового сообщения с повторными попытками
+    try:
+        await generate_voice_with_retries(user_text, random_lang, file_path)
+    except gTTSError as e:
+        logger.error(f"Ошибка при генерации речи: {e}")
+        await callback.message.reply(f"Ошибка при генерации речи: {e}")
+        return
 
     # Отправка голосового сообщения
     voice = FSInputFile(file_path)
     await bot.send_voice(chat_id=callback.message.chat.id, voice=voice)
 
-    #+++++++++++++++++++++++++++++++++++++++++++++++
-    # Отправляем уведомление с указанием случайного языка
-    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено c акцентом  {random_lang.upper()}  языка:))")
+    # Уведомляем о выбранном языке
+    logger.info(f"Голосовое сообщение отправлено с акцентом {random_lang.upper()} языка")
+    await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено с акцентом {random_lang.upper()} языка:")
 
-
-
-    # Удаляем файл после отправки (опционально)
+    # Удаляем файл после отправки
     os.remove(file_path)
-
-    # Убираем "часики" на кнопке
-    await callback.answer()
-
-    # Пауза перед отправкой меню (имитация ожидания прослушивания)
-    await asyncio.sleep(5)
 
     # Создаем меню с кнопками выбора языка
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=lang.upper(), callback_data=f"select_lang:{lang}:{message_id}") for lang in languages]
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton(text=lang.upper(), callback_data=f"select_lang:{lang}:{message_id}") for lang in languages
+        ]]
     )
 
     # Отправляем меню с выбором языка
+    logger.info("Отправлены кнопки для выбора языка озвучки")
     await bot.send_message(chat_id=callback.message.chat.id, text="Выберите язык для озвучки:", reply_markup=keyboard)
+
+    # Убираем "часики" на кнопке
+    await callback.answer()
 
 
 # Генерация голосового сообщения с выбранным языком
@@ -129,25 +135,45 @@ async def generate_voice_with_selected_lang(callback: CallbackQuery):
 
     file_path = f"audio/{callback.id}_{selected_lang}.mp3"
 
-    print(f"Выбранный язык: {selected_lang}")
+    logger.info(f"Генерация голосового сообщения для текста на языке: {selected_lang}")
 
     # Генерация голосового сообщения с выбранным языком
-    tts = gTTS(user_text, lang=selected_lang)
-    tts.save(file_path)
+    try:
+        await generate_voice_with_retries(user_text, selected_lang, file_path)
+    except gTTSError as e:
+        logger.error(f"Ошибка при генерации речи: {e}")
+        await callback.message.reply(f"Ошибка при генерации речи: {e}")
+        return
 
     # Отправка голосового сообщения
     voice = FSInputFile(file_path)
     await bot.send_voice(chat_id=callback.message.chat.id, voice=voice)
 
-
-    # Отправляем уведомление с указанием языка
+    # Уведомляем о выбранном языке
+    logger.info(f"Голосовое сообщение отправлено с акцентом {selected_lang.upper()} языка")
     await bot.send_message(chat_id=callback.message.chat.id, text=f"Озвучено с акцентом {selected_lang.upper()} языка:")
 
-    # Удаляем файл (опционально)
+    # Удаляем файл после отправки
     os.remove(file_path)
 
     # Убираем "часики" на кнопке
     await callback.answer()
+
+
+# Функция для генерации голосового сообщения с повторными попытками
+async def generate_voice_with_retries(user_text, lang, file_path, retries=3):
+    for attempt in range(retries):
+        try:
+            tts = gTTS(user_text, lang=lang)
+            tts.save(file_path)
+            logger.info(f"Голосовое сообщение сохранено в файл: {file_path}")
+            return file_path
+        except gTTSError as e:
+            logger.error(f"Ошибка при генерации речи (попытка {attempt + 1}): {e}")
+            if attempt < retries - 1:
+                sleep(2)  # Пауза перед повторной попыткой
+            else:
+                raise Exception("Не удалось подключиться к Google TTS после нескольких попыток.")
 
 
 # Обработка кнопки "Перевести текст" — выбор языка перевода
@@ -162,12 +188,13 @@ async def choose_translation_language(callback: CallbackQuery):
 
     # Создаем меню с кнопками выбора языка
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=lang.upper(), callback_data=f"translate_to:{lang}:{callback.id}") for lang in languages]
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton(text=lang.upper(), callback_data=f"translate_to:{lang}:{callback.id}") for lang in languages
+        ]]
     )
 
     # Отправляем меню с языками
+    logger.info(f"Отправлено меню с языками для перевода текста: {user_text}")
     await bot.send_message(chat_id=callback.message.chat.id, text="Выберите язык перевода:", reply_markup=keyboard)
     await callback.answer()  # Убираем "часики" на кнопке
 
@@ -182,8 +209,10 @@ async def translate_text(callback: CallbackQuery):
     # Выполняем перевод
     try:
         translated_text = GoogleTranslator(source='auto', target=target_lang).translate(user_text)
+        logger.info(f"Перевод выполнен на {target_lang.upper()}: {translated_text}")
     except Exception as e:
         translated_text = f"Ошибка перевода: {e}"
+        logger.error(f"Ошибка при переводе текста: {e}")
 
     # Отправляем переведённый текст
     await bot.send_message(chat_id=callback.message.chat.id, text=f"Перевод на {target_lang.upper()}:\n{translated_text}")
@@ -192,7 +221,7 @@ async def translate_text(callback: CallbackQuery):
 
 # Основная функция для запуска бота
 async def main():
-    print("Бот запущен...")
+    logger.info("Бот запущен...")
     dp.include_router(router)  # Добавляем маршрутизатор в диспетчер
     await dp.start_polling(bot)
 
